@@ -1,92 +1,91 @@
-name: Build and Release Flutter Android App
+name: "Build"
 
 on:
-  workflow_dispatch:
-    inputs:
-      release_version:
-        description: 'Version of the release (e.g., 1.0.0)'
-        required: true
-        default: '1.0.0'
+  pull_request:
+    branches:
+      - dev
+      - test
+  push:
+    branches:
+      - dev
+      - test
 
-jobs:
-  build-and-release:
-    name: Build and Release Android APK
-    runs-on: ubuntu-latest
+jobs:  
+  build:      
+    name: Build & Release 
+    runs-on: ubuntu-latest 
 
     steps:
-    # Checkout the repository
-    - name: Checkout code
-      uses: actions/checkout@v3
+        #1 Checkout Repository
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
-    # Set up Java JDK (required for Android builds)
-    - name: Set up JDK
-      uses: actions/setup-java@v3
-      with:
-        distribution: 'zulu'
-        java-version: '17'
+        #2 Setup Java
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
     # Set up Android SDK
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v2
-      with:
-        api-level: 35
-        build-tools: 35.0.2
-        target: android-35
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 35
+          build-tools: 35.0.2
+          target: android-35
+        #3 Setup Flutter
+      - name: Set Up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.3'
+          channel: 'stable'
 
-    # Set up Flutter
-    - name: Manual Flutter Setup
-      run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip xz-utils
-          wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.3-stable.tar.xz
-          tar xf flutter_linux_3.29.3-stable.tar.xz
-          echo "PATH=$PATH:$(pwd)/flutter/bin" >> $GITHUB_ENV
-          flutter --version
+        #4 Install Dependencies
+      - name: Install Dependencies
+        run: flutter pub get
+        
+       #6 Building APK
+      - name: Build APK
+        run: flutter build apk --release
 
+        #9 Upload Artifacts
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: Releases
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
 
-    # Install dependencies
-    - name: Install dependencies
-      run: |
-        flutter pub get
-        flutter pub upgrade
+        #10 Extract Version
+      - name: Extract version from pubspec.yaml
+        id: extract_version
+        run: |
+          version=$(grep '^version: ' pubspec.yaml | cut -d ' ' -f 2 | tr -d '\r')
+          echo "VERSION=$version" >> $GITHUB_ENV
 
-    # Build Android APK with ABI split and multidex support
-    - name: Build APK
-      run: |
-        flutter build apk --release --split-per-abi
-        ls -al build/app/outputs/flutter-apk/
+        #11 Check if Tag Exists
+      - name: Check if Tag Exists
+        id: check_tag
+        run: |
+          if git rev-parse "v${{ env.VERSION }}" >/dev/null 2>&1; then
+            echo "TAG_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "TAG_EXISTS=false" >> $GITHUB_ENV
+          fi
 
-    # Archive and prepare APKs for release
-    - name: Archive APKs
-      run: |
-        mkdir -p build/apk
-        for apk in build/app/outputs/flutter-apk/app-*-release.apk; do
-          cp "$apk" build/apk/$(basename "$apk" .apk)-${{ github.event.inputs.release_version }}.apk
-        done
-
-    # Create a GitHub Release
-    - name: Create GitHub Release
-      id: create_release
-      uses: actions/create-release@v1
-      with:
-        tag_name: ${{ github.event.inputs.release_version }}
-        release_name: Release ${{ github.event.inputs.release_version }}
-        body: |
-          This is the Android release for version ${{ github.event.inputs.release_version }} of the app.
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    # Upload APKs to Release
-    - name: Upload APKs to Release
-      uses: actions/upload-release-asset@v1
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: build/apk
-        asset_name: '*.apk'
-        asset_content_type: application/vnd.android.package-archive
-
-    # Debugging Information
-    - name: List APK Files
-      run: ls -al build/apk
+        #12 Modify Tag if it Exists
+      - name: Modify Tag
+        if: env.TAG_EXISTS == 'true'
+        id: modify_tag
+        run: |
+          new_version="${{ env.VERSION }}-build-${{ github.run_number }}"
+          echo "VERSION=$new_version" >> $GITHUB_ENV
+        
+        #13 Create Release
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "build/app/outputs/flutter-apk/app-release.apk"
+          tag: v${{ env.VERSION }}
+          token: ${{ secrets.TOKEN }}

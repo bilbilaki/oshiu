@@ -107,7 +107,7 @@ class _TranslateScreenState extends State<TranslateScreen> {
     //   print("CRITICAL: OPENAI_API_KEY not found.");
     //   // You might want to show a dialog to the user here.
     // }
-    _openAIClient = OpenAIClient(apiKey: "aa-b1BFjpcQHWHDgTWnpsfTGm7CwueIsSjrbl8UMD5ezCLaBPHY" , baseUrl: "https://api.avalai.ir/v1");
+    _openAIClient = OpenAIClient(apiKey: "" , baseUrl: "https://api.avalai.ir/v1");
 
     _sourceTextController.addListener(() {
       setState(() {

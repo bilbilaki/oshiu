@@ -40,7 +40,7 @@ jobs:
           sudo apt-get install -y unzip xz-utils
           wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.3-stable.tar.xz
           tar xf flutter_linux_3.29.3-stable.tar.xz
-          export PATH="$PATH:`pwd`/flutter/bin"
+          echo "PATH=$PATH:$(pwd)/flutter/bin" >> $GITHUB_ENV
           flutter --version
 
 

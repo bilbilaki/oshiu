@@ -1,23 +1,21 @@
-name: "Build"
+name: Build and Release Flutter Android App
 
 on:
-  pull_request:
-    branches:
-      - dev
-      - test
-  push:
-    branches:
-      - dev
-      - test
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Version of the release (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
 
-jobs:  
-  build:      
-    name: Build & Release 
-    runs-on: ubuntu-latest 
+jobs:
+  build-and-release:
+    name: Build and Release Android APK
+    runs-on: ubuntu-latest
 
     steps:
-        #1 Checkout Repository
-      - name: Checkout Repository
+    # Checkout the repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
         #2 Setup Java

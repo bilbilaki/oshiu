@@ -9,6 +9,7 @@ import 'package:openai_dart/openai_dart.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:oshiu/services/record_service.dart';
 
 import 'package:oshiu/main.dart'; // For theme switching
 import 'package:oshiu/themes.dart'; // For CustomThemeExtension
@@ -38,14 +39,14 @@ class TranslationHistoryItem {
   });
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'sourceText': sourceText,
-        'translatedText': translatedText,
-        'sourceLanguage': sourceLanguage,
-        'targetLanguage': targetLanguage,
-        'mode': mode.toString(),
-        'timestamp': timestamp.toIso8601String(),
-      };
+    'id': id,
+    'sourceText': sourceText,
+    'translatedText': translatedText,
+    'sourceLanguage': sourceLanguage,
+    'targetLanguage': targetLanguage,
+    'mode': mode.toString(),
+    'timestamp': timestamp.toIso8601String(),
+  };
 
   factory TranslationHistoryItem.fromJson(Map<String, dynamic> json) =>
       TranslationHistoryItem(
@@ -54,8 +55,9 @@ class TranslationHistoryItem {
         translatedText: json['translatedText'],
         sourceLanguage: json['sourceLanguage'],
         targetLanguage: json['targetLanguage'],
-        mode: TranslationMode.values
-            .firstWhere((e) => e.toString() == json['mode']),
+        mode: TranslationMode.values.firstWhere(
+          (e) => e.toString() == json['mode'],
+        ),
         timestamp: DateTime.parse(json['timestamp']),
       );
 }
@@ -86,16 +88,25 @@ class _TranslateScreenState extends State<TranslateScreen> {
   late OpenAIClient _openAIClient;
   final PermissionService _permissionService = PermissionService();
   final Uuid _uuid = const Uuid();
+  late RecordService _recordService;
 
   XFile? _pickedImageFile;
   PlatformFile? _pickedAudioFile;
 
-
   // Dummy language list - Consider making this more dynamic or comprehensive
   final List<String> _allLanguages = [
     'Detect language', 'English', 'Spanish', 'French', 'German', 'Persian',
-    'Arabic', 'Chinese (Simplified)', 'Japanese', 'Russian', 'Korean', 'Italian',
-    'Portuguese', 'Hindi', 'Turkish', 'Dutch', 'Polish', // Add more common languages
+    'Arabic',
+    'Chinese (Simplified)',
+    'Japanese',
+    'Russian',
+    'Korean',
+    'Italian',
+    'Portuguese',
+    'Hindi',
+    'Turkish',
+    'Dutch',
+    'Polish', // Add more common languages
   ];
 
   @override
@@ -107,11 +118,18 @@ class _TranslateScreenState extends State<TranslateScreen> {
     //   print("CRITICAL: OPENAI_API_KEY not found.");
     //   // You might want to show a dialog to the user here.
     // }
-    _openAIClient = OpenAIClient(apiKey: "" , baseUrl: "https://api.avalai.ir/v1");
+    _openAIClient = OpenAIClient(
+    apiKey: "aa-b1BFjpcQHWHDgTWnpsfTGm7CwueIsSjrbl8UMD5ezCLaBPHY",
+    baseUrl: "https://api.avalai.ir/v1",
+    );
+    
+    _recordService = RecordService(client: _openAIClient);
 
     _sourceTextController.addListener(() {
       setState(() {
-        _currentTokenCount = TiktokenService.countTokens(_sourceTextController.text);
+        _currentTokenCount = TiktokenService.countTokens(
+          _sourceTextController.text,
+        );
       });
     });
     _loadDefaultLanguages();
@@ -134,7 +152,7 @@ class _TranslateScreenState extends State<TranslateScreen> {
       );
     }
   }
-  
+
   String _getLanguageCodeForOpenAI(String languageName) {
     // This is a simplification. OpenAI doesn't use codes for detection,
     // but for specific language requests, full names are usually fine.
@@ -145,7 +163,7 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
   Future<void> _triggerTranslation() async {
     if (_isLoading) return;
-
+    
     final String textToTranslate = _sourceTextController.text.trim();
     String effectiveSourceLang = _sourceLanguage;
 
@@ -165,12 +183,15 @@ class _TranslateScreenState extends State<TranslateScreen> {
         return;
       }
     } else {
-       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${_currentMode.name} mode translation not fully implemented yet.'))
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${_currentMode.name} mode translation not fully implemented yet.',
+          ),
+        ),
       );
       return;
     }
-
 
     setState(() {
       _isLoading = true;
@@ -181,11 +202,23 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
     try {
       if (_currentMode == TranslationMode.text) {
-        await _translateText(textToTranslate, effectiveSourceLang, _targetLanguage);
+        await _translateText(
+          textToTranslate,
+          effectiveSourceLang,
+          _targetLanguage,
+        );
       } else if (_currentMode == TranslationMode.images) {
-        await _translateImageContent(_pickedImageFile!, effectiveSourceLang, _targetLanguage);
+        await _translateImageContent(
+          _pickedImageFile!,
+          effectiveSourceLang,
+          _targetLanguage,
+        );
       } else if (_currentMode == TranslationMode.audioFile) {
-        await _translateAudioFile(_pickedAudioFile!, effectiveSourceLang, _targetLanguage);
+        await _translateAudioFile(
+          _pickedAudioFile!,
+          effectiveSourceLang,
+          _targetLanguage,
+        );
       }
     } catch (e) {
       print("Error during translation: $e");
@@ -200,19 +233,25 @@ class _TranslateScreenState extends State<TranslateScreen> {
       });
     }
   }
-  
-  Future<void> _translateText(String text, String sourceLang, String targetLang) async {
+
+  Future<void> _translateText(
+    String text,
+    String sourceLang,
+    String targetLang,
+  ) async {
     setState(() => _loadingMessage = "Translating text...");
     // Max tokens for gpt-4o-mini is high (e.g., 128k context, but output is limited, e.g. 4k tokens)
     // Let's aim for ~3000 input tokens per chunk to be safe and allow for prompt/response.
-    const maxTokensPerChunk = 3000; 
+    const maxTokensPerChunk = 3000;
     final totalTokens = TiktokenService.countTokens(text);
 
     String systemPrompt;
     if (sourceLang == 'Detect language') {
-      systemPrompt = "You are an expert multilingual translator. First, detect the language of the provided text. Then, translate the detected text accurately into $targetLang. Respond only with the translated text. If the input is gibberish or not translatable, say 'Cannot translate input'.";
+      systemPrompt =
+          "You are an expert multilingual translator. First, detect the language of the provided text. Then, translate the detected text accurately into $targetLang. Respond only with the translated text. If the input is gibberish or not translatable, say 'Cannot translate input'.";
     } else {
-      systemPrompt = "You are an expert multilingual translator. Translate the following text from $sourceLang to $targetLang accurately. Respond only with the translated text. If the input is gibberish or not translatable, say 'Cannot translate input'.";
+      systemPrompt =
+          "You are an expert multilingual translator. Translate the following text from $sourceLang to $targetLang accurately. Respond only with the translated text. If the input is gibberish or not translatable, say 'Cannot translate input'.";
     }
 
     List<String> chunks = _splitTextIntoChunks(text, maxTokensPerChunk);
@@ -233,58 +272,76 @@ class _TranslateScreenState extends State<TranslateScreen> {
             content: ChatCompletionUserMessageContent.string(chunks[i]),
           ),
         ],
-        temperature: 0.3, // Lower temperature for more deterministic translation
+        temperature:
+            0.3, // Lower temperature for more deterministic translation
         // maxTokens: 4096, // Max output tokens, adjust if needed
       );
-      
+
       // Using stream for potentially faster perceived response
       final stream = _openAIClient.createChatCompletionStream(request: request);
       StringBuffer chunkTranslation = StringBuffer();
       await for (final res in stream) {
         chunkTranslation.write(res.choices.first.delta.content ?? "");
-         if (mounted) { // Update UI progressively
-            setState(() {
-                _translatedText = translatedBuffer.toString() + chunkTranslation.toString();
-            });
+        if (mounted) {
+          // Update UI progressively
+          setState(() {
+            _translatedText =
+                translatedBuffer.toString() + chunkTranslation.toString();
+          });
         }
       }
       translatedBuffer.write(chunkTranslation.toString());
-      if (chunks.length > 1 && i < chunks.length -1) {
+      if (chunks.length > 1 && i < chunks.length - 1) {
         translatedBuffer.write("\n\n"); // Add separator for multi-chunk
       }
     }
-    
+
     if (mounted) {
       final finalTranslation = translatedBuffer.toString().trim();
       setState(() {
         _translatedText = finalTranslation;
       });
-      if (finalTranslation.isNotEmpty && !finalTranslation.startsWith("Error:")) {
-         _saveToHistory(text, finalTranslation, sourceLang, targetLang, TranslationMode.text);
+      if (finalTranslation.isNotEmpty &&
+          !finalTranslation.startsWith("Error:")) {
+        _saveToHistory(
+          text,
+          finalTranslation,
+          sourceLang,
+          targetLang,
+          TranslationMode.text,
+        );
       }
     }
   }
 
-  Future<void> _translateImageContent(XFile imageFile, String sourceLang, String targetLang) async {
+  Future<void> _translateImageContent(
+    XFile imageFile,
+    String sourceLang,
+    String targetLang,
+  ) async {
     setState(() => _loadingMessage = "Processing image...");
     final bytes = await imageFile.readAsBytes();
     final base64Image = base64Encode(bytes);
 
-    String detectedTextPrompt = "Extract all text from this image. If no text is found, respond with 'No text found in image.'";
+    String detectedTextPrompt =
+        "Extract all text from this image. If no text is found, respond with 'No text found in image.'";
     if (sourceLang != 'Detect language') {
       detectedTextPrompt += " The text is expected to be in $sourceLang.";
     }
 
     // Step 1: Extract text using gpt-4o (which is multi-modal)
     final extractionRequest = CreateChatCompletionRequest(
-      model: ChatCompletionModel.modelId('gpt-4.1-mini'), // Use gpt-4o for vision
+      model: ChatCompletionModel.modelId(
+        'gpt-4.1-mini',
+      ), // Use gpt-4o for vision
       messages: [
         ChatCompletionMessage.user(
           content: ChatCompletionUserMessageContent.parts([
             ChatCompletionMessageContentPart.text(text: detectedTextPrompt),
             ChatCompletionMessageContentPart.image(
               imageUrl: ChatCompletionMessageImageUrl(
-                url: 'data:image/jpeg;base64,$base64Image', // Assuming JPEG, adjust if needed
+                url:
+                    'data:image/jpeg;base64,$base64Image', // Assuming JPEG, adjust if needed
               ),
             ),
           ]),
@@ -296,20 +353,30 @@ class _TranslateScreenState extends State<TranslateScreen> {
     String extractedText = "";
     setState(() => _loadingMessage = "Extracting text from image...");
     try {
-      final extractionStream = _openAIClient.createChatCompletionStream(request: extractionRequest);
+      final extractionStream = _openAIClient.createChatCompletionStream(
+        request: extractionRequest,
+      );
       StringBuffer tempExtractedText = StringBuffer();
       await for (final res in extractionStream) {
         tempExtractedText.write(res.choices.first.delta.content ?? "");
       }
       extractedText = tempExtractedText.toString().trim();
 
-      if (extractedText.isEmpty || extractedText.toLowerCase().contains("no text found")) {
-        setState(() => _translatedText = "No text found in image or text extraction failed.");
+      if (extractedText.isEmpty ||
+          extractedText.toLowerCase().contains("no text found")) {
+        setState(
+          () =>
+              _translatedText =
+                  "No text found in image or text extraction failed.",
+        );
         return;
       }
       setState(() {
-         _sourceTextController.text = "Extracted text: \n$extractedText"; // Show extracted text
-         _currentTokenCount = TiktokenService.countTokens(_sourceTextController.text);
+        _sourceTextController.text =
+            "Extracted text: \n$extractedText"; // Show extracted text
+        _currentTokenCount = TiktokenService.countTokens(
+          _sourceTextController.text,
+        );
       });
     } catch (e) {
       _showErrorSnackbar("Image text extraction failed: $e");
@@ -317,16 +384,24 @@ class _TranslateScreenState extends State<TranslateScreen> {
       return;
     }
 
-
     // Step 2: Translate the extracted text
     if (extractedText.isNotEmpty) {
       setState(() => _loadingMessage = "Translating extracted text...");
-      await _translateText(extractedText, "Detect language", targetLang); // Always detect for extracted
+      await _translateText(
+        extractedText,
+        "Detect language",
+        targetLang,
+      ); // Always detect for extracted
       // History will be saved by _translateText
     }
   }
 
-  Future<void> _translateAudioFile(PlatformFile audioFile, String sourceLang, String targetLang) async {
+  Future<void> _translateAudioFile(
+    PlatformFile audioFile,
+    String sourceLang,
+    String targetLang,
+  ) async {
+
     if (audioFile.path == null) {
       _showErrorSnackbar("Audio file path is invalid.");
       return;
@@ -336,18 +411,23 @@ class _TranslateScreenState extends State<TranslateScreen> {
     // Using base64 for audio input as per one of the examples for chat completion
     // Note: openai_dart might have a dedicated createTranscription method which could be more direct for Whisper.
     // The example provided uses chat completion with audio data.
-    
+
     final transcriptionRequest = CreateChatCompletionRequest(
-      model: ChatCompletionModel.modelId('gpt-4.1-mini'), // gpt-4o supports audio
+      model: ChatCompletionModel.modelId(
+        'gpt-4.1-mini',
+      ), // gpt-4o supports audio
       messages: [
         ChatCompletionMessage.user(
           content: ChatCompletionUserMessageContent.parts([
             ChatCompletionMessageContentPart.text(
-              text: 'Transcribe this audio accurately. If the audio is unclear or contains no speech, respond with "Could not transcribe audio.". The language of the audio is likely $sourceLang, but auto-detect if unsure.',
+              text:
+                  'Transcribe this audio accurately. If the audio is unclear or contains no speech, respond with "Could not transcribe audio.". The language of the audio is likely $sourceLang, but auto-detect if unsure.',
             ),
             ChatCompletionMessageContentPart.audio(
               inputAudio: ChatCompletionMessageInputAudio(
-                data: base64Encode(audioBytes), format: ChatCompletionMessageInputAudioFormat.wav, // Send as base64
+                data: base64Encode(audioBytes),
+                format:
+                    ChatCompletionMessageInputAudioFormat.wav, // Send as base64
                 // format: ChatCompletionMessageInputAudioFormat.wav, // Adjust format if known and supported
                 // Ensure your input audio format is compatible or use a dedicated transcription endpoint if issues
               ),
@@ -364,35 +444,46 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
     String transcribedText = "";
     try {
-      final transcriptionStream = _openAIClient.createChatCompletionStream(request: transcriptionRequest);
+      final transcriptionStream = _openAIClient.createChatCompletionStream(
+        request: transcriptionRequest,
+      );
       StringBuffer tempTranscribedText = StringBuffer();
       await for (final res in transcriptionStream) {
         tempTranscribedText.write(res.choices.first.delta.content ?? "");
       }
       transcribedText = tempTranscribedText.toString().trim();
 
-      if (transcribedText.isEmpty || transcribedText.toLowerCase().contains("could not transcribe")) {
-         setState(() => _translatedText = "Audio transcription failed or no speech detected.");
-         return;
+      if (transcribedText.isEmpty ||
+          transcribedText.toLowerCase().contains("could not transcribe")) {
+        setState(
+          () =>
+              _translatedText =
+                  "Audio transcription failed or no speech detected.",
+        );
+        return;
       }
       setState(() {
-         _sourceTextController.text = "Transcribed text: \n$transcribedText";
-         _currentTokenCount = TiktokenService.countTokens(_sourceTextController.text);
+        _sourceTextController.text = "Transcribed text: \n$transcribedText";
+        _currentTokenCount = TiktokenService.countTokens(
+          _sourceTextController.text,
+        );
       });
-
     } catch (e) {
       _showErrorSnackbar("Audio transcription failed: $e");
       setState(() => _translatedText = "Error during audio transcription.");
       return;
     }
-    
+
     // Step 2: Translate the transcribed text
     if (transcribedText.isNotEmpty) {
       setState(() => _loadingMessage = "Translating transcribed text...");
-      await _translateText(transcribedText, "Detect language", targetLang); // Assume auto-detect for transcript
+      await _translateText(
+        transcribedText,
+        "Detect language",
+        targetLang,
+      ); // Assume auto-detect for transcript
     }
   }
-
 
   List<String> _splitTextIntoChunks(String text, int maxTokensPerChunk) {
     List<String> chunks = [];
@@ -406,7 +497,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
     // Simple split by attempting to maintain sentences/paragraphs
     // A more sophisticated approach would involve token-aware splitting.
-    List<String> paragraphs = text.split(RegExp(r'\n\s*\n')); // Split by double newlines
+    List<String> paragraphs = text.split(
+      RegExp(r'\n\s*\n'),
+    ); // Split by double newlines
     StringBuffer currentChunkBuffer = StringBuffer();
     int currentChunkTokens = 0;
 
@@ -426,51 +519,69 @@ class _TranslateScreenState extends State<TranslateScreen> {
         }
         // If paragraph itself is too big, split it further (e.g., by sentences or hard char limit)
         if (paragraphTokens > maxTokensPerChunk) {
-            List<String> sentences = p.split(RegExp(r'(?<=[.!?])\s+'));
-            for(String s in sentences){
-                int sentenceTokens = TiktokenService.countTokens(s);
-                if (currentChunkTokens + sentenceTokens <= maxTokensPerChunk) {
-                    currentChunkBuffer.write(s + " ");
-                    currentChunkTokens += sentenceTokens;
-                } else {
-                    if (currentChunkBuffer.isNotEmpty) chunks.add(currentChunkBuffer.toString().trim());
-                    currentChunkBuffer.clear();
-                    currentChunkBuffer.write(s + " ");
-                    currentChunkTokens = sentenceTokens;
-                }
+          List<String> sentences = p.split(RegExp(r'(?<=[.!?])\s+'));
+          for (String s in sentences) {
+            int sentenceTokens = TiktokenService.countTokens(s);
+            if (currentChunkTokens + sentenceTokens <= maxTokensPerChunk) {
+              currentChunkBuffer.write(s + " ");
+              currentChunkTokens += sentenceTokens;
+            } else {
+              if (currentChunkBuffer.isNotEmpty) {
+                chunks.add(currentChunkBuffer.toString().trim());
+              }
+              currentChunkBuffer.clear();
+              currentChunkBuffer.write(s + " ");
+              currentChunkTokens = sentenceTokens;
             }
+          }
         } else {
-             currentChunkBuffer.write(p + "\n\n");
-             currentChunkTokens = paragraphTokens; // Start new chunk with this paragraph
+          currentChunkBuffer.write(p + "\n\n");
+          currentChunkTokens =
+              paragraphTokens; // Start new chunk with this paragraph
         }
       }
     }
     if (currentChunkBuffer.isNotEmpty) {
       chunks.add(currentChunkBuffer.toString().trim());
     }
-    
+
     // If any chunk is still too large after basic splitting (e.g. very long sentence), do a hard split.
     // This is a fallback.
     List<String> finalChunks = [];
     for (String chunk in chunks) {
-        if (TiktokenService.countTokens(chunk) > maxTokensPerChunk) {
-            // Hard split based on approximate character length per token
-            int approxCharsPerToken = 3; // Estimate
-            int maxLengthChars = maxTokensPerChunk * approxCharsPerToken;
-            for (int i = 0; i < chunk.length; i += maxLengthChars) {
-                finalChunks.add(chunk.substring(i, i + maxLengthChars > chunk.length ? chunk.length : i + maxLengthChars));
-            }
-        } else {
-            finalChunks.add(chunk);
+      if (TiktokenService.countTokens(chunk) > maxTokensPerChunk) {
+        // Hard split based on approximate character length per token
+        int approxCharsPerToken = 3; // Estimate
+        int maxLengthChars = maxTokensPerChunk * approxCharsPerToken;
+        for (int i = 0; i < chunk.length; i += maxLengthChars) {
+          finalChunks.add(
+            chunk.substring(
+              i,
+              i + maxLengthChars > chunk.length
+                  ? chunk.length
+                  : i + maxLengthChars,
+            ),
+          );
         }
+      } else {
+        finalChunks.add(chunk);
+      }
     }
-    return finalChunks.isEmpty && text.isNotEmpty ? [text] : finalChunks; // Ensure at least one chunk if text exists
+    return finalChunks.isEmpty && text.isNotEmpty
+        ? [text]
+        : finalChunks; // Ensure at least one chunk if text exists
   }
 
-  Future<void> _saveToHistory(String source, String translated, String sourceLang, String targetLang, TranslationMode mode) async {
+  Future<void> _saveToHistory(
+    String source,
+    String translated,
+    String sourceLang,
+    String targetLang,
+    TranslationMode mode,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     List<String> historyJson = prefs.getStringList('translationHistory') ?? [];
-    
+
     final newItem = TranslationHistoryItem(
       id: _uuid.v4(),
       sourceText: source,
@@ -490,12 +601,19 @@ class _TranslateScreenState extends State<TranslateScreen> {
   }
 
   void _swapLanguages() {
-    if (_sourceLanguage == 'Detect language' && _targetLanguage == 'Detect language') return;
+    if (_sourceLanguage == 'Detect language' &&
+        _targetLanguage == 'Detect language') {
+      return;
+    }
     if (_sourceLanguage == 'Detect language') {
-         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Cannot swap "Detect language" to be a target language directly. Please select a specific source language first.'))
-        );
-        return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Cannot swap "Detect language" to be a target language directly. Please select a specific source language first.',
+          ),
+        ),
+      );
+      return;
     }
     setState(() {
       final tempLang = _sourceLanguage;
@@ -504,13 +622,14 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
       // Optionally swap text and re-translate
       if (_sourceTextController.text.isNotEmpty || _translatedText.isNotEmpty) {
-          final currentSourceText = _sourceTextController.text;
-          _sourceTextController.text = _translatedText.startsWith("Error:") ? "" : _translatedText;
-           _translatedText = ""; // Clear previous translation to avoid confusion
-          // If you want to auto-translate after swap:
-          // if (_sourceTextController.text.isNotEmpty) {
-          //   _triggerTranslation();
-          // }
+        final currentSourceText = _sourceTextController.text;
+        _sourceTextController.text =
+            _translatedText.startsWith("Error:") ? "" : _translatedText;
+        _translatedText = ""; // Clear previous translation to avoid confusion
+        // If you want to auto-translate after swap:
+        // if (_sourceTextController.text.isNotEmpty) {
+        //   _triggerTranslation();
+        // }
       }
     });
   }
@@ -523,9 +642,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
       return;
     }
     Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$fieldName copied to clipboard.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$fieldName copied to clipboard.')));
   }
 
   Future<void> _saveToFile() async {
@@ -539,7 +658,8 @@ class _TranslateScreenState extends State<TranslateScreen> {
     try {
       String? outputFile = await FilePicker.platform.saveFile(
         dialogTitle: 'Please select an output file:',
-        fileName: 'translation_output_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.txt',
+        fileName:
+            'translation_output_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.txt',
         type: FileType.custom,
         allowedExtensions: ['txt', 'md'], // Allow text and markdown
       );
@@ -548,9 +668,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
         // Ensure the file has an extension if user didn't provide one
         String finalPath = outputFile;
         if (!outputFile.contains('.')) {
-            finalPath += '.txt'; // Default to .txt
+          finalPath += '.txt'; // Default to .txt
         }
-        
+
         final file = File(finalPath);
         await file.writeAsString(_translatedText);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -567,12 +687,13 @@ class _TranslateScreenState extends State<TranslateScreen> {
   Future<void> _pickImage() async {
     bool hasPermission = await _permissionService.requestPhotosPermission();
     if (!hasPermission) {
-        // Optionally, request camera permission if you want to offer taking a picture
-         bool hasCameraPermission = await _permissionService.requestCameraPermission();
-         if(!hasCameraPermission) {
-            _showErrorSnackbar('Photo library permission not granted.');
-            return;
-         }
+      // Optionally, request camera permission if you want to offer taking a picture
+      bool hasCameraPermission =
+          await _permissionService.requestCameraPermission();
+      if (!hasCameraPermission) {
+        _showErrorSnackbar('Photo library permission not granted.');
+        return;
+      }
     }
 
     final ImagePicker picker = ImagePicker();
@@ -581,7 +702,8 @@ class _TranslateScreenState extends State<TranslateScreen> {
       if (image != null) {
         setState(() {
           _pickedImageFile = image;
-          _sourceTextController.text = 'Image selected: ${image.name}'; // Placeholder
+          _sourceTextController.text =
+              'Image selected: ${image.name}'; // Placeholder
           _translatedText = ''; // Clear previous translation
           _currentMode = TranslationMode.images; // Switch mode
         });
@@ -590,7 +712,7 @@ class _TranslateScreenState extends State<TranslateScreen> {
       _showErrorSnackbar('Error picking image: $e');
     }
   }
-  
+
   Future<void> _pickAudioFile() async {
     // File picker usually doesn't need explicit storage permission for picking.
     try {
@@ -601,7 +723,8 @@ class _TranslateScreenState extends State<TranslateScreen> {
       if (result != null && result.files.single.path != null) {
         setState(() {
           _pickedAudioFile = result.files.single;
-          _sourceTextController.text = 'Audio file selected: ${_pickedAudioFile!.name}';
+          _sourceTextController.text =
+              'Audio file selected: ${_pickedAudioFile!.name}';
           _translatedText = '';
           _currentMode = TranslationMode.audioFile; // Switch mode
         });
@@ -621,11 +744,22 @@ class _TranslateScreenState extends State<TranslateScreen> {
       padding: const EdgeInsets.only(right: 8.0),
       child: TextButton.icon(
         style: TextButton.styleFrom(
-          backgroundColor: isSelected ? colorScheme.primaryContainer : colorScheme.surfaceContainerHighest,
-          foregroundColor: isSelected ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+          backgroundColor:
+              isSelected
+                  ? colorScheme.primaryContainer
+                  : colorScheme.surfaceContainerHighest,
+          foregroundColor:
+              isSelected
+                  ? colorScheme.onPrimaryContainer
+                  : colorScheme.onSurfaceVariant,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          side: isSelected ? BorderSide(color: colorScheme.primary, width: 1.5) : BorderSide.none,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          side:
+              isSelected
+                  ? BorderSide(color: colorScheme.primary, width: 1.5)
+                  : BorderSide.none,
         ),
         icon: Icon(icon, size: 20),
         label: Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
@@ -635,17 +769,23 @@ class _TranslateScreenState extends State<TranslateScreen> {
             _translatedText = ''; // Clear text when mode changes
             _pickedImageFile = null;
             _pickedAudioFile = null;
-            if (mode != TranslationMode.text && mode != TranslationMode.images && mode != TranslationMode.audioFile) {
-               _sourceTextController.text = ''; // Clear source text for unimplemented modes
+            if (mode != TranslationMode.text &&
+                mode != TranslationMode.images &&
+                mode != TranslationMode.audioFile) {
+              _sourceTextController.text =
+                  ''; // Clear source text for unimplemented modes
             }
             if (mode == TranslationMode.images) _pickImage();
             if (mode == TranslationMode.audioFile) {
               _pickAudioFile();
-            } else if (mode == TranslationMode.documents || mode == TranslationMode.websites) {
-               ScaffoldMessenger.of(context).showSnackBar(
-                 SnackBar(content: Text('$label mode not fully implemented yet.'))
-               );
-             }
+            } else if (mode == TranslationMode.documents ||
+                mode == TranslationMode.websites) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('$label mode not fully implemented yet.'),
+                ),
+              );
+            }
           });
         },
       ),
@@ -658,7 +798,13 @@ class _TranslateScreenState extends State<TranslateScreen> {
     String currentSelection;
 
     if (isSource) {
-      commonLanguages = ['Detect language', 'Persian', 'English', 'Spanish', 'French'];
+      commonLanguages = [
+        'Detect language',
+        'Persian',
+        'English',
+        'Spanish',
+        'French',
+      ];
       currentSelection = _sourceLanguage;
     } else {
       commonLanguages = ['English', 'Persian', 'Spanish', 'French', 'German'];
@@ -667,59 +813,80 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
     // Ensure current selection is in the common list or add it
     if (!commonLanguages.contains(currentSelection)) {
-        commonLanguages.insert(isSource ? 1 : 0, currentSelection); // Add it near the start
+      commonLanguages.insert(
+        isSource ? 1 : 0,
+        currentSelection,
+      ); // Add it near the start
     }
     // Remove duplicates if any after adding
     commonLanguages = commonLanguages.toSet().toList();
 
-
-    List<Widget> buttons = commonLanguages.take(5).map((lang) { // Show limited common ones
-      bool isSelected = currentSelection == lang;
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2.0),
-        child: InkWell(
-          onTap: () {
-            setState(() {
-              if (isSource) {
-                _sourceLanguage = lang;
-              } else {
-                _targetLanguage = lang;
-              }
-              // No auto-translate on lang change, user will press button
-            });
-          },
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: isSelected ? Theme.of(context).colorScheme.primaryContainer : null,
+    List<Widget> buttons =
+        commonLanguages.take(5).map((lang) {
+          // Show limited common ones
+          bool isSelected = currentSelection == lang;
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2.0),
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  if (isSource) {
+                    _sourceLanguage = lang;
+                  } else {
+                    _targetLanguage = lang;
+                  }
+                  // No auto-translate on lang change, user will press button
+                });
+              },
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: isSelected ? Theme.of(context).colorScheme.primary : Colors.grey.shade300,
-                width: isSelected ? 1.5 : 1.0,
-              )
-            ),
-            child: Text(
-              lang,
-              style: TextStyle(
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color:
+                      isSelected
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : null,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color:
+                        isSelected
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey.shade300,
+                    width: isSelected ? 1.5 : 1.0,
+                  ),
+                ),
+                child: Text(
+                  lang,
+                  style: TextStyle(
+                    fontWeight:
+                        isSelected ? FontWeight.bold : FontWeight.normal,
+                    color:
+                        isSelected
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      );
-    }).toList();
+          );
+        }).toList();
 
     buttons.add(
       Padding(
         padding: const EdgeInsets.only(left: 4.0),
         child: IconButton(
-          icon: Icon(Icons.arrow_drop_down_circle_outlined, color: customTheme.iconColor ?? Theme.of(context).colorScheme.primary),
+          icon: Icon(
+            Icons.arrow_drop_down_circle_outlined,
+            color:
+                customTheme.iconColor ?? Theme.of(context).colorScheme.primary,
+          ),
           tooltip: "More languages",
           onPressed: () => _showLanguagePicker(isSource),
-        )
-      )
+        ),
+      ),
     );
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -744,8 +911,12 @@ class _TranslateScreenState extends State<TranslateScreen> {
                 children: [
                   Padding(
                     padding: const EdgeInsets.all(8.0),
-                    child: Text(isSource ? "Select Source Language" : "Select Target Language", 
-                                style: Theme.of(context).textTheme.titleLarge),
+                    child: Text(
+                      isSource
+                          ? "Select Source Language"
+                          : "Select Target Language",
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                   ),
                   Expanded(
                     child: ListView.builder(
@@ -753,12 +924,16 @@ class _TranslateScreenState extends State<TranslateScreen> {
                       itemCount: _allLanguages.length,
                       itemBuilder: (context, index) {
                         final lang = _allLanguages[index];
-                        if (!isSource && lang == 'Detect language') return const SizedBox.shrink();
+                        if (!isSource && lang == 'Detect language') {
+                          return const SizedBox.shrink();
+                        }
 
                         return ListTile(
                           title: Text(lang),
                           selected: lang == currentLang,
-                          selectedTileColor: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.5),
+                          selectedTileColor: Theme.of(
+                            context,
+                          ).colorScheme.primaryContainer.withOpacity(0.5),
                           onTap: () {
                             setState(() {
                               if (isSource) {
@@ -776,7 +951,7 @@ class _TranslateScreenState extends State<TranslateScreen> {
                 ],
               ),
             );
-          }
+          },
         );
       },
     );
@@ -789,63 +964,120 @@ class _TranslateScreenState extends State<TranslateScreen> {
     Widget sourcePanel = Container(
       margin: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: customTheme.inputPanelBackground ?? Theme.of(context).colorScheme.surfaceContainerLowest,
-        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.5)),
+        color:
+            customTheme.inputPanelBackground ??
+            Theme.of(context).colorScheme.surfaceContainerLowest,
+        border: Border.all(
+          color: Theme.of(context).dividerColor.withOpacity(0.5),
+        ),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         children: [
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0,
+              ),
               child: TextField(
                 controller: _sourceTextController,
                 maxLines: null,
                 expands: true,
                 maxLength: _maxLength,
                 decoration: InputDecoration(
-                  hintText: _currentMode == TranslationMode.images
-                      ? (_pickedImageFile != null ? 'Image: ${_pickedImageFile!.name}\n(Extracted text will appear here after processing)' : 'Pick an image for translation')
-                      : _currentMode == TranslationMode.audioFile
-                          ? (_pickedAudioFile != null ? 'Audio: ${_pickedAudioFile!.name}\n(Transcript will appear here after processing)' : 'Pick an audio file for translation')
+                  hintText:
+                      _currentMode == TranslationMode.images
+                          ? (_pickedImageFile != null
+                              ? 'Image: ${_pickedImageFile!.name}\n(Extracted text will appear here after processing)'
+                              : 'Pick an image for translation')
+                          : _currentMode == TranslationMode.audioFile
+                          ? (_pickedAudioFile != null
+                              ? 'Audio: ${_pickedAudioFile!.name}\n(Transcript will appear here after processing)'
+                              : 'Pick an audio file for translation')
                           : 'Enter text to translate...',
                   border: InputBorder.none,
                   counterText: '',
                 ),
-                style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurface),
-                readOnly: _currentMode == TranslationMode.images || _currentMode == TranslationMode.audioFile, // Read-only if image/audio selected
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+                readOnly:
+                    _currentMode == TranslationMode.images ||
+                    _currentMode ==
+                        TranslationMode
+                            .audioFile, // Read-only if image/audio selected
               ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                // IconButton( // TODO: Implement voice input for text mode
-                //   icon: Icon(Icons.mic_none_outlined, color: customTheme.iconColor),
-                //   tooltip: "Voice input (Not implemented)",
-                //   onPressed: () { 
-                //     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Voice input not implemented')));
-                //   },
-                // ),
-                if (_currentMode == TranslationMode.text)
-                  IconButton(
-                    icon: Icon(Icons.paste, color: customTheme.iconColor ?? Theme.of(context).iconTheme.color),
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+          children: [
+          IconButton(
+          icon: Icon(
+          _recordService.isRecording ? Icons.stop : Icons.mic_none_outlined,
+          color: _recordService.isRecording ? Colors.red : customTheme.iconColor,
+          ),
+          tooltip: _recordService.isRecording ? "Stop Recording" : "Voice input",
+          onPressed: () async {
+          if (_recordService.isRecording) {
+          final recordingPath = await _recordService.stopRecording();
+          if (recordingPath != null) {
+          final transcription = await _recordService.transcribeAudio(recordingPath);
+          if (transcription != null) {
+          setState(() {
+          _sourceTextController.text = transcription;
+          _currentTokenCount = TiktokenService.countTokens(transcription);
+          });
+          } else {
+          _showErrorSnackbar("Failed to transcribe audio");
+          }
+          }
+          } else {
+          try {
+          await _recordService.startRecording();
+          _showErrorSnackbar("Recording started");
+          } catch (error) {
+          _showErrorSnackbar("Error starting recording: ${error.toString()}");
+          }
+          }
+          },
+          ),
+          if (_currentMode == TranslationMode.text)
+          IconButton(
+          icon: Icon(
+          Icons.paste,
+                      color:
+                          customTheme.iconColor ??
+                          Theme.of(context).iconTheme.color,
+                    ),
                     tooltip: "Paste from clipboard",
                     onPressed: () async {
-                      final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+                      final clipboardData = await Clipboard.getData(
+                        Clipboard.kTextPlain,
+                      );
                       if (clipboardData != null && clipboardData.text != null) {
                         _sourceTextController.text = clipboardData.text!;
                       }
                     },
                   ),
-                if (_sourceTextController.text.isNotEmpty && _currentMode == TranslationMode.text)
+                if (_sourceTextController.text.isNotEmpty &&
+                    _currentMode == TranslationMode.text)
                   IconButton(
-                    icon: Icon(Icons.clear, color: customTheme.iconColor ?? Theme.of(context).iconTheme.color),
+                    icon: Icon(
+                      Icons.clear,
+                      color:
+                          customTheme.iconColor ??
+                          Theme.of(context).iconTheme.color,
+                    ),
                     tooltip: "Clear text",
                     onPressed: () {
                       _sourceTextController.clear();
-                      setState(() { _translatedText = ''; });
+                      setState(() {
+                        _translatedText = '';
+                      });
                     },
                   ),
                 const Spacer(),
@@ -854,13 +1086,22 @@ class _TranslateScreenState extends State<TranslateScreen> {
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
                 IconButton(
-                  icon: Icon(Icons.copy_outlined, color: customTheme.iconColor ?? Theme.of(context).iconTheme.color),
+                  icon: Icon(
+                    Icons.copy_outlined,
+                    color:
+                        customTheme.iconColor ??
+                        Theme.of(context).iconTheme.color,
+                  ),
                   tooltip: "Copy source text",
-                  onPressed: () => _copyToClipboard(_sourceTextController.text, 'Source text'),
+                  onPressed:
+                      () => _copyToClipboard(
+                        _sourceTextController.text,
+                        'Source text',
+                      ),
                 ),
               ],
             ),
-          )
+          ),
         ],
       ),
     );
@@ -870,52 +1111,90 @@ class _TranslateScreenState extends State<TranslateScreen> {
       padding: const EdgeInsets.all(16.0),
       width: double.infinity,
       decoration: BoxDecoration(
-        color: customTheme.outputPanelBackground ?? Theme.of(context).colorScheme.surfaceContainerLow,
-        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.5)),
+        color:
+            customTheme.outputPanelBackground ??
+            Theme.of(context).colorScheme.surfaceContainerLow,
+        border: Border.all(
+          color: Theme.of(context).dividerColor.withOpacity(0.5),
+        ),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Stack(
         children: [
           SingleChildScrollView(
             child: Text(
-              _isLoading && _translatedText.isEmpty ? (_loadingMessage) : (_translatedText.isEmpty ? 'Translation will appear here.' : _translatedText),
+              _isLoading && _translatedText.isEmpty
+                  ? (_loadingMessage)
+                  : (_translatedText.isEmpty
+                      ? 'Translation will appear here.'
+                      : _translatedText),
               style: TextStyle(
                 fontSize: 16,
-                color: _translatedText.isEmpty ? Colors.grey[500] : Theme.of(context).colorScheme.onSurface,
+                color:
+                    _translatedText.isEmpty
+                        ? Colors.grey[500]
+                        : Theme.of(context).colorScheme.onSurface,
               ),
             ),
           ),
-          if (_translatedText.isNotEmpty && !_translatedText.startsWith("Error:"))
+          if (_translatedText.isNotEmpty &&
+              !_translatedText.startsWith("Error:"))
             Positioned(
-              top: -8, right: -8,
+              top: -8,
+              right: -8,
               child: IconButton(
-                icon: Icon(Icons.copy_outlined, color: customTheme.iconColor ?? Theme.of(context).iconTheme.color),
+                icon: Icon(
+                  Icons.copy_outlined,
+                  color:
+                      customTheme.iconColor ??
+                      Theme.of(context).iconTheme.color,
+                ),
                 tooltip: "Copy translated text",
-                onPressed: () => _copyToClipboard(_translatedText, 'Translated text'),
+                onPressed:
+                    () => _copyToClipboard(_translatedText, 'Translated text'),
               ),
             ),
-           if (_translatedText.isNotEmpty && !_translatedText.startsWith("Error:"))
+          if (_translatedText.isNotEmpty &&
+              !_translatedText.startsWith("Error:"))
             Positioned(
-              bottom: -8, right: -8,
+              bottom: -8,
+              right: -8,
               child: IconButton(
-                icon: Icon(Icons.save_alt_outlined, color: customTheme.iconColor ?? Theme.of(context).iconTheme.color),
+                icon: Icon(
+                  Icons.save_alt_outlined,
+                  color:
+                      customTheme.iconColor ??
+                      Theme.of(context).iconTheme.color,
+                ),
                 tooltip: "Save translation to file",
                 onPressed: _saveToFile,
               ),
             ),
         ],
-      )
+      ),
     );
 
-    final panelHeight = isWideScreen ? double.infinity : (constraints.maxHeight * 0.35).clamp(200.0, 300.0);
+    final panelHeight =
+        isWideScreen
+            ? double.infinity
+            : (constraints.maxHeight * 0.35).clamp(200.0, 300.0);
 
     return isWideScreen
-        ? Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [Expanded(child: sourcePanel), const SizedBox(width: 8), Expanded(child: targetPanel)])
-        : Column(children: [
+        ? Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: sourcePanel),
+            const SizedBox(width: 8),
+            Expanded(child: targetPanel),
+          ],
+        )
+        : Column(
+          children: [
             SizedBox(height: panelHeight, child: sourcePanel),
             const SizedBox(height: 10),
             SizedBox(height: panelHeight, child: targetPanel),
-          ]);
+          ],
+        );
   }
 
   Widget _buildBottomActions() {
@@ -926,27 +1205,54 @@ class _TranslateScreenState extends State<TranslateScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           _buildBottomActionItem(Icons.history, 'History', () {
-             Navigator.push(context, MaterialPageRoute<void>(builder: (context) => const TranslationHistoryScreen()));
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const TranslationHistoryScreen(),
+              ),
+            );
           }, customTheme.iconColor),
-           _buildBottomActionItem(Icons.star_border, 'Saved', () {
-             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved feature not implemented')));
-           }, customTheme.iconColor),
-           FloatingActionButton.extended(
+          _buildBottomActionItem(Icons.star_border, 'Saved', () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Saved feature not implemented')),
+            );
+          }, customTheme.iconColor),
+          FloatingActionButton.extended(
             onPressed: _isLoading ? null : _triggerTranslation,
-            label: Text(_isLoading ? "Processing..." : "Translate", style: const TextStyle(fontSize: 16)),
-            icon: _isLoading ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.translate_rounded),
+            label: Text(
+              _isLoading ? "Processing..." : "Translate",
+              style: const TextStyle(fontSize: 16),
+            ),
+            icon:
+                _isLoading
+                    ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                    : const Icon(Icons.translate_rounded),
             backgroundColor: Theme.of(context).colorScheme.primary,
             foregroundColor: Theme.of(context).colorScheme.onPrimary,
           ),
-           _buildBottomActionItem(Icons.settings_outlined, 'Settings', () {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings not implemented')));
+          _buildBottomActionItem(Icons.settings_outlined, 'Settings', () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Settings not implemented')),
+            );
           }, customTheme.iconColor),
         ],
       ),
     );
   }
 
- Widget _buildBottomActionItem(IconData icon, String label, VoidCallback onPressed, Color? iconColor) {
+  Widget _buildBottomActionItem(
+    IconData icon,
+    String label,
+    VoidCallback onPressed,
+    Color? iconColor,
+  ) {
     return InkWell(
       onTap: onPressed,
       borderRadius: BorderRadius.circular(8),
@@ -955,9 +1261,19 @@ class _TranslateScreenState extends State<TranslateScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 24, color: iconColor ?? Theme.of(context).colorScheme.primary),
+            Icon(
+              icon,
+              size: 24,
+              color: iconColor ?? Theme.of(context).colorScheme.primary,
+            ),
             const SizedBox(height: 4),
-            Text(label, style: TextStyle(fontSize: 12, color: iconColor ?? Theme.of(context).colorScheme.primary)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: iconColor ?? Theme.of(context).colorScheme.primary,
+              ),
+            ),
           ],
         ),
       ),
@@ -972,7 +1288,7 @@ class _TranslateScreenState extends State<TranslateScreen> {
     return Scaffold(
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16,0,16,8), // Less top padding
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8), // Less top padding
           child: LayoutBuilder(
             builder: (context, constraints) {
               return Column(
@@ -981,12 +1297,22 @@ class _TranslateScreenState extends State<TranslateScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       // Placeholder for a logo or app name if desired
-                      Text("AI Translator", style: Theme.of(context).textTheme.titleMedium),
+                      Text(
+                        "AI Translator",
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                       IconButton(
-                        icon: Icon(isDarkMode ? Icons.light_mode_outlined : Icons.dark_mode_outlined, color: customTheme.iconColor),
+                        icon: Icon(
+                          isDarkMode
+                              ? Icons.light_mode_outlined
+                              : Icons.dark_mode_outlined,
+                          color: customTheme.iconColor,
+                        ),
                         tooltip: "Toggle Theme",
                         onPressed: () {
-                          MyApp.of(context)?.changeTheme(isDarkMode ? ThemeMode.light : ThemeMode.dark);
+                          MyApp.of(context)?.changeTheme(
+                            isDarkMode ? ThemeMode.light : ThemeMode.dark,
+                          );
                         },
                       ),
                     ],
@@ -996,11 +1322,31 @@ class _TranslateScreenState extends State<TranslateScreen> {
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       children: [
-                        _buildModeButton(TranslationMode.text, Icons.translate, 'Text'),
-                        _buildModeButton(TranslationMode.images, Icons.image_search, 'Image'),
-                        _buildModeButton(TranslationMode.audioFile, Icons.audiotrack_outlined, 'Audio File'),
-                        _buildModeButton(TranslationMode.documents, Icons.description_outlined, 'Documents'),
-                        _buildModeButton(TranslationMode.websites, Icons.language_outlined, 'Websites'),
+                        _buildModeButton(
+                          TranslationMode.text,
+                          Icons.translate,
+                          'Text',
+                        ),
+                        _buildModeButton(
+                          TranslationMode.images,
+                          Icons.image_search,
+                          'Image',
+                        ),
+                        _buildModeButton(
+                          TranslationMode.audioFile,
+                          Icons.audiotrack_outlined,
+                          'Audio File',
+                        ),
+                        _buildModeButton(
+                          TranslationMode.documents,
+                          Icons.description_outlined,
+                          'Documents',
+                        ),
+                        _buildModeButton(
+                          TranslationMode.websites,
+                          Icons.language_outlined,
+                          'Websites',
+                        ),
                       ],
                     ),
                   ),
@@ -1011,7 +1357,13 @@ class _TranslateScreenState extends State<TranslateScreen> {
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 0.0),
                         child: IconButton(
-                          icon: Icon(Icons.swap_horiz, size: 28, color: customTheme.iconColor ?? Theme.of(context).colorScheme.primary),
+                          icon: Icon(
+                            Icons.swap_horiz,
+                            size: 28,
+                            color:
+                                customTheme.iconColor ??
+                                Theme.of(context).colorScheme.primary,
+                          ),
                           onPressed: _swapLanguages,
                           tooltip: 'Swap languages',
                         ),
@@ -1020,7 +1372,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
                     ],
                   ),
                   const SizedBox(height: 10),
-                  if (_isLoading && _translationProgress > 0 && _translationProgress < 1)
+                  if (_isLoading &&
+                      _translationProgress > 0 &&
+                      _translationProgress < 1)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
                       child: Column(
@@ -1028,26 +1382,39 @@ class _TranslateScreenState extends State<TranslateScreen> {
                           LinearProgressIndicator(
                             value: _translationProgress,
                             backgroundColor: Colors.grey[300],
-                            valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Theme.of(context).colorScheme.primary,
+                            ),
                           ),
                           const SizedBox(height: 4),
-                          Text(_loadingMessage, style: Theme.of(context).textTheme.bodySmall)
+                          Text(
+                            _loadingMessage,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                         ],
                       ),
                     ),
-                  Expanded(
-                    child: _buildTranslationPanels(constraints),
+                  Expanded(child: _buildTranslationPanels(constraints)),
+                  const SizedBox(
+                    height: 10,
+                  ), // Removed to give more space to panels
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        /* TODO: Implement feedback */
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Feedback not implemented'),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        'Send feedback',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
                   ),
-                   const SizedBox(height: 10), // Removed to give more space to panels
-                   Align(
-                     alignment: Alignment.centerRight,
-                       child: TextButton(
-                       onPressed: () { /* TODO: Implement feedback */ 
-                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Feedback not implemented')));
-                       },
-                       child: const Text('Send feedback', style: TextStyle(fontSize: 12)),
-                     ),
-                   ),
                   const SizedBox(height: 5),
                   _buildBottomActions(),
                 ],
@@ -1066,12 +1433,8 @@ class TranslationHistoryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Translation History'),
-      ),
-      body: const Center(
-        child: Text('Translation history will appear here'),
-      ),
+      appBar: AppBar(title: const Text('Translation History')),
+      body: const Center(child: Text('Translation history will appear here')),
     );
   }
 }

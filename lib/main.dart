@@ -4,11 +4,6 @@ import 'package:oshiu/themes.dart';
 import 'package:oshiu/translate_screen.dart';
 
 void main() async {
-    WidgetsFlutterBinding.ensureInitialized();
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
   runApp(const MyApp());
 }
 
